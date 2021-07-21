@@ -1,0 +1,11 @@
+[package]
+name = "rust-toolchain-scraper"
+version = "0.1.0"
+authors = ["oskarbraten <oskarbraten@users.noreply.github.com>"]
+edition = "2018"
+
+[dependencies]
+url = "2.2.2"
+tokio = { version = "1.8.2", features = ["full"] }
+reqwest = { version = "0.11.4", features = ["stream", "gzip"] }
+futures-util = "0.3.15"
