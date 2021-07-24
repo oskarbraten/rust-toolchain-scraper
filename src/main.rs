@@ -283,7 +283,7 @@ async fn main() -> Result<()> {
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(
-            "Downloads rustup, the Rust toolchain, and the Cargo package registry for offline use.",
+            "Downloads the Rust toolchain, the Cargo package registry, and rustup for offline use.",
         )
         .arg(
             Arg::new("nightly")
