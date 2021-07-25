@@ -1,5 +1,5 @@
 use clap::{App, Arg};
-use crates_index::Index;
+use crates_index::BareIndex;
 use futures_util::{stream, StreamExt};
 use log::LevelFilter;
 use regex::Regex;
@@ -14,6 +14,7 @@ use url::Url;
 
 const RUSTLANG_ROOT_URL: &'static str = "https://static.rust-lang.org";
 const CRATES_ROOT_URL: &'static str = "https://static.crates.io";
+const CRATES_INDEX_URL: &str = "https://github.com/rust-lang/crates.io-index";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Overwrite {
@@ -251,11 +252,18 @@ async fn crates(
     concurrency: usize,
     validate_checksums: bool,
 ) -> Result<()> {
-    let index = Index::new(format!("{}/index", output_directory));
+    let bare_index = BareIndex::with_path(
+        PathBuf::from(format!("{}/index", output_directory)),
+        CRATES_INDEX_URL,
+    );
+
+    let mut index = bare_index
+    .open_or_clone()
+    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
 
     log::info!("Retrieving/updating crates.io-index...");
     index
-        .retrieve_or_update()
+        .retrieve()
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
 
     let crates = index
