@@ -10,7 +10,7 @@ Install the required dependencies for the `openssl` crate, instructions [here](h
 git clone https://github.com/oskarbraten/squire.git
 cd squire
 
-cargo install .
+cargo install --path .
 ```
 
 ## Usage
