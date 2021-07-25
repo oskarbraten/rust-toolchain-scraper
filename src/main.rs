@@ -230,8 +230,7 @@ async fn crates(concurrency: usize, output_directory: &str) -> Result<()> {
         .retrieve_or_update()
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
 
-    log::info!("Mapping and filtering crates...");
-    let crates: Vec<(String, String, [u8; 32])> = index
+    let crates = index
         .crates()
         .filter_map(|c| {
             if c.versions().len() < 2 {
@@ -252,14 +251,12 @@ async fn crates(concurrency: usize, output_directory: &str) -> Result<()> {
                     .collect::<Vec<(String, String, [u8; 32])>>(),
             )
         })
-        .flatten()
-        .collect();
+        .flatten();
 
-    let total = crates.len();
-    stream::iter(crates.into_iter().enumerate())
+    stream::iter(crates.enumerate())
         .for_each_concurrent(concurrency, |(i, (name, version, checksum))| async move {
             let path = format!("/crates/{}/{}-{}.crate", name, name, version);
-            log::info!("Downloading {}-{} – {}/{}", name, version, i + 1, total);
+            log::info!("Downloading {}-{} – {}", name, version, i + 1);
             let _ = download(output_directory, &path, Overwrite::Checksum(checksum)).await;
         })
         .await;
