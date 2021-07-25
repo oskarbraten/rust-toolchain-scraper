@@ -3,6 +3,7 @@ use crates_index::Index;
 use futures_util::{stream, StreamExt};
 use log::LevelFilter;
 use regex::Regex;
+use reqwest::Client;
 use sha2::{Digest, Sha256};
 use simple_logger::SimpleLogger;
 use std::collections::HashSet;
@@ -21,7 +22,12 @@ enum Overwrite {
     Checksum([u8; 32]),
 }
 
-async fn download(output_directory: &str, path: &str, overwrite: Overwrite) -> Result<()> {
+async fn download(
+    http_client: &Client,
+    output_directory: &str,
+    path: &str,
+    overwrite: Overwrite,
+) -> Result<()> {
     let url = if path.ends_with(".crate") {
         format!("{}{}", CRATES_ROOT_URL, path)
     } else {
@@ -36,7 +42,6 @@ async fn download(output_directory: &str, path: &str, overwrite: Overwrite) -> R
             Overwrite::Checksum(checksum) => {
                 let bytes = std::fs::read(&path_buf)?;
                 let digest: [u8; 32] = Sha256::digest(&bytes).as_slice().try_into().unwrap();
-
                 checksum == digest
             }
             Overwrite::False => true,
@@ -45,7 +50,7 @@ async fn download(output_directory: &str, path: &str, overwrite: Overwrite) -> R
 
     if download {
         log::info!("Downloading {}...", url);
-        match reqwest::get(&url).await {
+        match http_client.get(&url).send().await {
             Ok(res) => {
                 log::debug!("Writing file {}...", path_buf.display());
 
@@ -71,12 +76,14 @@ async fn download(output_directory: &str, path: &str, overwrite: Overwrite) -> R
 }
 
 async fn rustup(
-    concurrency: usize,
+    http_client: &Client,
     output_directory: &str,
+    concurrency: usize,
     architectures: &Vec<String>,
 ) -> Result<()> {
     log::info!("Downloading rustup executables...");
     download(
+        http_client,
         output_directory,
         "/rustup/release-stable.toml",
         Overwrite::True,
@@ -90,7 +97,7 @@ async fn rustup(
             let url = format!("/rustup/dist/{}/{}", arch, name);
 
             async move {
-                let _ = download(output_directory, &url, Overwrite::True).await;
+                let _ = download(http_client, output_directory, &url, Overwrite::True).await;
             }
         })
         .await;
@@ -98,13 +105,18 @@ async fn rustup(
     Ok(())
 }
 
-async fn get_dist_archiectures(output_directory: &str, channel: &str) -> Result<Vec<String>> {
+async fn get_dist_archiectures(
+    http_client: &Client,
+    output_directory: &str,
+    channel: &str,
+) -> Result<Vec<String>> {
     log::info!(
         "Getting all available architectures for the Rust toolchain [channel-{}]...",
         channel
     );
 
     download(
+        http_client,
         output_directory,
         &format!("/dist/channel-rust-{}.toml", channel),
         Overwrite::True,
@@ -139,34 +151,45 @@ async fn get_dist_archiectures(output_directory: &str, channel: &str) -> Result<
     Ok(architectures.into_iter().collect())
 }
 
-async fn dist(
-    concurrency: usize,
+async fn dist_download(
+    http_client: &Client,
     output_directory: &str,
+    path: &str,
+    overwrite: Overwrite,
+) -> Result<()> {
+    download(http_client, output_directory, path, overwrite).await?;
+    download(
+        http_client,
+        output_directory,
+        &format!("{}.asc", path),
+        overwrite,
+    )
+    .await?;
+    download(
+        http_client,
+        output_directory,
+        &format!("{}.sha256", path),
+        overwrite,
+    )
+    .await
+}
+
+async fn dist(
+    http_client: &Client,
+    output_directory: &str,
+    concurrency: usize,
     channel: &str,
     architectures: &Vec<String>,
 ) -> Result<()> {
     log::info!("Downloading Rust toolchain [channel-{}]...", channel);
-    download(
+
+    dist_download(
+        http_client,
         output_directory,
-        &format!("/dist/channel-rust-{}.toml.sha256", channel),
+        &format!("/dist/channel-rust-{}.toml", channel),
         Overwrite::True,
     )
     .await?;
-    download(
-        output_directory,
-        &format!("/dist/channel-rust-{}.toml.asc", channel),
-        Overwrite::True,
-    )
-    .await?;
-    // Already downloaded if we're on the stable channel...
-    if channel != "stable" {
-        download(
-            output_directory,
-            &format!("/dist/channel-rust-{}.toml", channel),
-            Overwrite::True,
-        )
-        .await?;
-    }
 
     let path = PathBuf::from(format!(
         "{}/dist/channel-rust-{}.toml",
@@ -214,7 +237,7 @@ async fn dist(
 
             let url = url.to_string();
             async move {
-                let _ = download(output_directory, &url, Overwrite::False).await;
+                let _ = dist_download(http_client, output_directory, &url, Overwrite::False).await;
             }
         })
         .await;
@@ -222,7 +245,12 @@ async fn dist(
     Ok(())
 }
 
-async fn crates(concurrency: usize, output_directory: &str) -> Result<()> {
+async fn crates(
+    http_client: &Client,
+    output_directory: &str,
+    concurrency: usize,
+    validate_checksums: bool,
+) -> Result<()> {
     let index = Index::new(format!("{}/index", output_directory));
 
     log::info!("Retrieving/updating crates.io-index...");
@@ -257,7 +285,14 @@ async fn crates(concurrency: usize, output_directory: &str) -> Result<()> {
         .for_each_concurrent(concurrency, |(i, (name, version, checksum))| async move {
             let path = format!("/crates/{}/{}-{}.crate", name, name, version);
             log::info!("Checking {}-{} – {}", name, version, i + 1);
-            let _ = download(output_directory, &path, Overwrite::Checksum(checksum)).await;
+
+            let overwrite = if validate_checksums {
+                Overwrite::Checksum(checksum)
+            } else {
+                Overwrite::False
+            };
+
+            let _ = download(http_client, output_directory, &path, overwrite).await;
         })
         .await;
 
@@ -273,35 +308,47 @@ async fn main() -> Result<()> {
             "Downloads the Rust toolchain, the Crates package registry, and rustup for offline use.",
         )
         .arg(
-            Arg::new("nightly")
-                .long("nightly")
-                .short('n')
-                .about("Download nightly rust toolchain."),
+            Arg::new("channels")
+            .long("channels")
+            .short('d')
+            .default_values(&["stable"])
+            .about("Specify toolchain channels, versions or dates (possible values: stable|beta|nightly|<major.minor>|<major.minor.patch>|<YYYY-MM-DD>)."),
         )
         .arg(
             Arg::new("verbose")
-                .long("verbose")
-                .about("Enable verbose mode."),
+            .long("verbose")
+            .short('v')
+            .about("Enable verbose mode."),
         )
         .arg(
             Arg::new("targets")
-                .long("targets")
-                .short('t')
-                .default_value("x86_64")
-                .about("Include toolchain distributions and rustup executables that match this regular expression. Use \"*\" to include rust-src."),
+            .long("targets")
+            .short('t')
+            .default_value("x86_64")
+            .about("Include only toolchain distributions and rustup executables that match this regular expression. Use \"*\" to include rust-src."),
         )
         .arg(
             Arg::new("concurrency")
-                .long("concurrency")
-                .short('c')
-                .default_value("5")
-                .about("Number of concurrent HTTP-requests allowed."),
+            .long("concurrency")
+            .short('c')
+            .default_value("5")
+            .about("Maximum number of concurrent HTTP-requests."),
+        )
+        .arg(
+            Arg::new("validate-checksums")
+            .long("validate-checksums")
+            .about("Enable checksum (SHA-256) validation of existing crate files.")
+        )
+        .arg(
+            Arg::new("user-agent")
+            .long("user-agent")
+            .default_value("squire (https://github.com/oskarbraten/squire)")
         )
         .arg(
             Arg::new("OUTPUT-DIRECTORY")
-                .about("Specifies the output directory for the mirror.")
-                .required(true)
-                .index(1),
+            .about("Specifies the output directory for the mirror.")
+            .required(true)
+            .index(1),
         )
         .get_matches();
 
@@ -315,32 +362,53 @@ async fn main() -> Result<()> {
         .unwrap();
 
     let output_directory = matches.value_of("OUTPUT-DIRECTORY").unwrap();
+    let channels = matches.values_of("channels").unwrap();
     let targets_regex = Regex::new(matches.value_of("targets").unwrap()).unwrap();
     let concurrency: usize = matches.value_of_t("concurrency").unwrap();
+    let user_agent = matches.value_of("user-agent").unwrap();
+    let validate_checksums = matches.value_of("validate-checksums").is_some();
+
+    let http_client = Client::builder()
+        .user_agent(user_agent)
+        .build()
+        .expect("Unable to build reqwest Client!");
 
     // Filter architectures based on regex:
-    let architectures: Vec<String> = get_dist_archiectures(output_directory, "stable")
-        .await?
-        .into_iter()
-        .filter(|arch| targets_regex.is_match(arch))
-        .collect();
+    let architectures: Vec<String> =
+        get_dist_archiectures(&http_client, output_directory, "stable")
+            .await?
+            .into_iter()
+            .filter(|arch| targets_regex.is_match(arch))
+            .collect();
 
     log::info!(
         "Selected architectures [channel-stable]: {}",
         architectures.join(", ")
     );
 
+    // Download rustup executables and manifest:
+    rustup(&http_client, output_directory, concurrency, &architectures).await?;
+
     // Download Rust toolchain(s) and channel manifest:
-    dist(concurrency, output_directory, "stable", &architectures).await?;
-    if matches.is_present("nightly") {
-        dist(concurrency, output_directory, "nightly", &architectures).await?;
+    for channel in channels {
+        dist(
+            &http_client,
+            output_directory,
+            concurrency,
+            channel,
+            &architectures,
+        )
+        .await?;
     }
 
-    // Download rustup executables and manifest:
-    rustup(concurrency, output_directory, &architectures).await?;
-
     // Download crate.io-index and crates:
-    crates(concurrency, output_directory).await?;
+    crates(
+        &http_client,
+        output_directory,
+        concurrency,
+        validate_checksums,
+    )
+    .await?;
 
     Ok(())
 }
