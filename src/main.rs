@@ -241,17 +241,7 @@ async fn crates(concurrency: usize, output_directory: &str) -> Result<()> {
             Some(
                 c.versions()
                     .iter()
-                    .filter(|v| {
-                        !(v.is_yanked() || {
-                            let semver = v
-                                .version()
-                                .split('.')
-                                .filter_map(|v| v.parse().ok())
-                                .collect::<Vec<u64>>();
-
-                            semver.into_iter().any(|v| v >= 9999)
-                        })
-                    })
+                    .filter(|v| !v.is_yanked())
                     .map(|v| {
                         (
                             v.name().to_string(),
