@@ -283,7 +283,7 @@ async fn main() -> Result<()> {
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(
-            "Downloads the Rust toolchain, the Cargo package registry, and rustup for offline use.",
+            "Downloads the Rust toolchain, the Crates package registry, and rustup for offline use.",
         )
         .arg(
             Arg::new("nightly")
@@ -301,7 +301,7 @@ async fn main() -> Result<()> {
                 .long("targets")
                 .short('t')
                 .default_value("x86_64")
-                .about("Include toolchain distributions and rustup-init executables that match this regular expression (using the rust crate regex). Use \"*\" to include rust-src."),
+                .about("Include toolchain distributions and rustup executables that match this regular expression. Use \"*\" to include rust-src."),
         )
         .arg(
             Arg::new("concurrency")
