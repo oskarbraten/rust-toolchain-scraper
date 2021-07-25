@@ -256,7 +256,7 @@ async fn crates(concurrency: usize, output_directory: &str) -> Result<()> {
     stream::iter(crates.enumerate())
         .for_each_concurrent(concurrency, |(i, (name, version, checksum))| async move {
             let path = format!("/crates/{}/{}-{}.crate", name, name, version);
-            log::info!("Downloading {}-{} – {}", name, version, i + 1);
+            log::info!("Checking {}-{} – {}", name, version, i + 1);
             let _ = download(output_directory, &path, Overwrite::Checksum(checksum)).await;
         })
         .await;
