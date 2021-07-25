@@ -4,6 +4,8 @@ Downloads the Rust toolchain, the Cargo package registry, and rustup for offline
 
 ## Installation
 
+Install the required dependencies for the `openssl` crate, instructions [here](https://docs.rs/openssl/0.10.35/openssl/#automatic).
+
 ```bash
 git clone https://github.com/oskarbraten/squire.git
 cd squire
